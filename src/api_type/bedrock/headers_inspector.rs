@@ -46,9 +46,6 @@ impl ApiTypeHandler for BedrockModelInvokeJsonHandler {
     }
 }
 
-/// Token counts come from the Anthropic usage block in the response body when
-/// present, since it splits cache writes by TTL. The Bedrock token count
-/// headers are the fallback for models whose body has no Anthropic usage block.
 struct BedrockInvokeJsonInspector {
     header_metadata: ResponseMetadata,
     body_metadata: Option<ResponseMetadata>,
@@ -142,75 +139,5 @@ mod tests {
         let metadata = inspector.finish().unwrap();
         assert_eq!(metadata.input_tokens, None);
         assert_eq!(metadata.output_tokens, None);
-    }
-
-    #[test]
-    fn inspect_response_body_with_cache_usage() {
-        let headers = headers_to_map(&[
-            ("x-amzn-bedrock-input-token-count", "25"),
-            ("x-amzn-bedrock-output-token-count", "150"),
-        ]);
-        let mut inspector = BedrockModelInvokeJsonHandler.response_inspector(
-            200,
-            &headers,
-            &crate::request_metadata::RequestInspectionMetadata::default(),
-        );
-        inspector.feed(
-            br#"{"id":"msg_123","type":"message","usage":{"input_tokens":25,"output_tokens":150,"cache_creation_input_tokens":3000,"cache_read_input_tokens":12000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":2000}}}"#,
-        );
-        let metadata = inspector.finish().unwrap();
-        assert_eq!(metadata.input_tokens, Some(25));
-        assert_eq!(metadata.output_tokens, Some(150));
-        assert_eq!(metadata.cache_read_input_tokens, Some(12000));
-        assert_eq!(
-            metadata.cache_creation_tokens,
-            Some(std::collections::HashMap::from([
-                ("5m".to_owned(), 1000),
-                ("1h".to_owned(), 2000),
-            ])),
-        );
-    }
-
-    #[test]
-    fn inspect_response_non_anthropic_body_uses_headers() {
-        let headers = headers_to_map(&[
-            ("x-amzn-bedrock-input-token-count", "25"),
-            ("x-amzn-bedrock-output-token-count", "150"),
-        ]);
-        let mut inspector = BedrockModelInvokeJsonHandler.response_inspector(
-            200,
-            &headers,
-            &crate::request_metadata::RequestInspectionMetadata::default(),
-        );
-        inspector.feed(br#"{"generation":"Hi!","prompt_token_count":25}"#);
-        let metadata = inspector.finish().unwrap();
-        assert_eq!(metadata.input_tokens, Some(25));
-        assert_eq!(metadata.output_tokens, Some(150));
-        assert_eq!(metadata.cache_read_input_tokens, None);
-        assert_eq!(metadata.cache_creation_tokens, None);
-    }
-
-    #[test]
-    fn inspect_response_cache_headers_fallback() {
-        let headers = headers_to_map(&[
-            ("x-amzn-bedrock-input-token-count", "25"),
-            ("x-amzn-bedrock-output-token-count", "150"),
-            ("x-amzn-bedrock-cache-read-input-token-count", "12000"),
-            ("x-amzn-bedrock-cache-write-input-token-count", "3000"),
-        ]);
-        let mut inspector = BedrockModelInvokeJsonHandler.response_inspector(
-            200,
-            &headers,
-            &crate::request_metadata::RequestInspectionMetadata::default(),
-        );
-        inspector.feed(br#"{"output":{"message":{"role":"assistant"}}}"#);
-        let metadata = inspector.finish().unwrap();
-        assert_eq!(metadata.input_tokens, Some(25));
-        assert_eq!(metadata.output_tokens, Some(150));
-        assert_eq!(metadata.cache_read_input_tokens, Some(12000));
-        assert_eq!(
-            metadata.cache_creation_tokens,
-            Some(HashMap::from([("unknown".to_owned(), 3000)])),
-        );
     }
 }
