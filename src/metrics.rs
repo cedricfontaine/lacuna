@@ -1,5 +1,6 @@
 use crate::request_metadata::{RequestMetadata, ResponseMetadata};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 static PROMETHEUS_HANDLE: LazyLock<PrometheusHandle> = LazyLock::new(|| {
@@ -44,4 +45,21 @@ pub fn record_response(request_metadata: &RequestMetadata, response_metadata: &R
     if let Some(tokens) = response_metadata.cache_read_input_tokens {
         metrics::counter!("lacuna_provider_tokens_cache_read_total", &labels).increment(tokens);
     }
+    let cache_creation_tokens = |duration: &str| {
+        response_metadata
+            .cache_creation_tokens
+            .as_ref()
+            .and_then(|map| map.get(duration).copied())
+    };
+    tracing::info!(
+        target: "lacuna::usage",
+        labels = %serde_json::json!(labels.into_iter().collect::<BTreeMap<_, _>>()),
+        input_tokens = response_metadata.input_tokens,
+        output_tokens = response_metadata.output_tokens,
+        cache_read_input_tokens = response_metadata.cache_read_input_tokens,
+        cache_creation_5m_tokens = cache_creation_tokens("5m"),
+        cache_creation_1h_tokens = cache_creation_tokens("1h"),
+        cache_creation_unknown_tokens = cache_creation_tokens("unknown"),
+        "usage"
+    );
 }
